@@ -8,7 +8,14 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolExecutor
 
 from devpilot_agent.state import AgentState, ToolCall
-from devpilot_agent.tools import create_project # 다른 Tool들도 필요에 따라 임포트
+from devpilot_agent.prject_tools import (
+    create_project,
+    get_all_projects_with_tasks,
+    get_single_project_with_tasks,
+    update_project,
+    delete_project,
+    get_dashboard_projects
+)
 
 load_dotenv()
 
@@ -17,7 +24,15 @@ llm = ChatOpenAI(model="gpt-4o", temperature=0) # 사용할 LLM 모델 지정
 
 # 2. Tool Executor 초기화
 # LangChain의 @tool 데코레이터로 정의된 모든 Tool들을 리스트로 전달
-tools = [create_project] # TODO: 여기에 정의한 다른 모든 Tool들을 추가
+tools = [
+    create_project,
+    get_all_projects_with_tasks,
+    get_single_project_with_tasks,
+    update_project,
+    delete_project,
+    get_dashboard_projects
+] 
+# TODO: 여기에 정의한 다른 모든 Tool들을 추가
 tool_executor = ToolExecutor(tools)
 
 # 3. Graph 노드 정의
