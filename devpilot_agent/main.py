@@ -8,13 +8,24 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolExecutor
 
 from devpilot_agent.state import AgentState, ToolCall
-from devpilot_agent.prject_tools import (
+from devpilot_agent.project_tools import (
     create_project,
     get_all_projects_with_tasks,
     get_single_project_with_tasks,
     update_project,
     delete_project,
     get_dashboard_projects
+)
+from devpilot_agent.task_tools import (
+    create_task,
+    get_all_tasks,
+    get_single_task,
+    update_task,
+    update_task_tags,
+    update_task_time,
+    update_task_status,
+    update_task_schedule,
+    remove_task_tags,
 )
 
 load_dotenv()
@@ -30,9 +41,17 @@ tools = [
     get_single_project_with_tasks,
     update_project,
     delete_project,
-    get_dashboard_projects
+    get_dashboard_projects,
+    create_task,
+    get_all_tasks,
+    get_single_task,
+    update_task,
+    update_task_tags,
+    update_task_time,
+    update_task_status,
+    update_task_schedule,
+    remove_task_tags,
 ] 
-# TODO: 여기에 정의한 다른 모든 Tool들을 추가
 tool_executor = ToolExecutor(tools)
 
 # 3. Graph 노드 정의
