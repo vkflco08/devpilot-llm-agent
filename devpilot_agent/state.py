@@ -18,5 +18,7 @@ class AgentState(TypedDict):
     chat_history: Annotated[List[BaseMessage], lambda x, y: x + y]
     # Tool 실행 결과
     tool_output: str
-    # 최종 응답
-    final_response: str
+    # LLM이 사용자에게 직접 전달할 응답 (최종 또는 중간 질문)
+    agent_response: str
+    # 추가 정보가 필요한 상태인지 여부 (T/F)
+    need_additional_info: bool
