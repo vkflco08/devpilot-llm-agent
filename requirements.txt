@@ -4,3 +4,5 @@ openai # OpenAI API를 사용할 경우
 anthropic # Anthropic Claude API를 사용할 경우 (선택)
 python-dotenv # 환경 변수 관리를 위해 (선택)
 requests # Spring Boot MCP Endpoint와 통신하기 위해
+fastapi # API 서버를 위한 프레임워크
+uvicorn # ASGI 서버

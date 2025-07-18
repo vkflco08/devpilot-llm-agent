@@ -1,8 +1,6 @@
-# devpilot_agent/main.py
-import os
 from dotenv import load_dotenv
-from typing import List, Union, Callable
-from langchain_openai import ChatOpenAI # 또는 langchain_anthropic 등
+from typing import List
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolExecutor

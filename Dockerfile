@@ -18,9 +18,9 @@ COPY .env .env
 ENV OPENAI_API_KEY=${OPENAI_API_KEY}
 ENV SPRING_BACKEND_URL=${SPRING_BACKEND_URL}
 
-# 명령 실행 권한 설정
-# CMD [ "python", "-m", "uvicorn", "devpilot_agent.main:app", "--host", "0.0.0.0", "--port", "8000"]
-# LangGraph 앱을 API로 노출할 경우 Uvicorn 같은 ASGI 서버 필요.
-# 여기서는 임시로 main.py 스크립트 직접 실행 예시.
-# 실제 서비스에서는 FastAPI 등을 사용하여 API 엔드포인트를 만들고 Uvicorn으로 실행합니다.
-CMD ["python", "devpilot_agent/main.py"]
+# ✨ CMD 명령어를 Uvicorn을 사용하여 FastAPI 앱을 실행하도록 변경
+# devpilot_agent.api:api_app 은 devpilot_agent 폴더의 api.py 파일에서 api_app 객체를 실행하라는 의미
+CMD ["uvicorn", "devpilot_agent.api:api_app", "--host", "0.0.0.0", "--port", "8000"]
+
+# FastAPI 앱이 8000번 포트에서 실행될 것임을 노출
+EXPOSE 8000
