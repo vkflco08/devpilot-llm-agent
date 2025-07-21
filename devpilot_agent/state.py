@@ -1,5 +1,5 @@
 # devpilot_agent/state.py
-from typing import List, TypedDict, Annotated
+from typing import List, TypedDict, Any, Dict
 from langchain_core.messages import BaseMessage
 from langgraph.graph import StateGraph, END
 
@@ -15,10 +15,10 @@ class AgentState(TypedDict):
     # LLM으로부터 제안된 Tool 호출 목록
     tool_calls: List[ToolCall]
     # 에이전트와 LLM 간의 대화 메시지 기록 (메모리 역할)
-    chat_history: Annotated[List[BaseMessage], lambda x, y: x + y]
+    chat_history: List[Dict[str, Any]] 
     # Tool 실행 결과
-    tool_output: str
+    tool_output: List[Any]
     # LLM이 사용자에게 직접 전달할 응답 (최종 또는 중간 질문)
     agent_response: str
     # 추가 정보가 필요한 상태인지 여부 (T/F)
-    need_additional_info: bool
+    clarification_needed: bool
