@@ -3,13 +3,16 @@
 @description 사용자 메시지를 받아 LangGraph 에이전트를 실행하고, 그 응답을 JSON 형태로 반환합니다.
 """
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field # Field 임포트 확인
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 import uvicorn
 import os
 from dotenv import load_dotenv
+from datetime import datetime
+from sqlalchemy.orm import Session
+from fastapi import Depends
+from devpilot_agent.database import get_db, create_db_tables, ChatMessage
 
 # LangGraph 애플리케이션 및 상태 정의 임포트
 from devpilot_agent.main import app as langgraph_app # LangGraph 앱 임포트
@@ -46,6 +49,11 @@ api_app.add_middleware(
     allow_headers=["*"],
 )
 
+# 애플리케이션 시작 시 데이터베이스 테이블 생성
+@api_app.on_event("startup")
+async def startup_event():
+    create_db_tables()
+
 # --- 요청 및 응답 모델 정의 ---
 
 # ChatRequest 모델
@@ -59,6 +67,16 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str = Field(..., description="챗봇의 응답 메시지")
 
+# 저장된 메시지 조회용
+class StoredChatMessageResponse(BaseModel):
+    sender: str = Field(..., description="메시지 발신자 ('user' 또는 'assistant')")
+    content: str = Field(..., description="메시지 내용")
+    timestamp: datetime = Field(..., description="메시지 전송 시간")
+
+# 채팅 히스토리 응답 모델
+class ChatHistoryResponse(BaseModel):
+    messages: List[StoredChatMessageResponse] = Field(..., description="조회된 과거 채팅 메시지 리스트")
+
 # --- API 엔드포인트 정의 ---
 
 @api_app.get("/health", summary="API 상태 확인")
@@ -68,10 +86,28 @@ async def health_check():
     """
     return {"status": "ok", "message": "DevPilot LLM Agent API is running."}
 
-@api_app.post("/chat", response_model=ChatResponse, summary="챗봇과 대화")
-async def chat_with_agent(request: ChatRequest):
+@api_app.get("/chat/history/{user_id}", response_model=ChatHistoryResponse, summary="특정 사용자의 채팅 히스토리 조회")
+async def get_chat_history(user_id: int, db: Session = Depends(get_db)):
     """
-    사용자의 메시지를 받아 LangGraph 에이전트를 실행하고 응답을 반환합니다.
+    특정 사용자의 과거 대화 기록을 데이터베이스에서 조회하여 반환합니다.
+    """
+
+    messages_from_db = db.query(ChatMessage).filter(ChatMessage.user_id == user_id).order_by(ChatMessage.timestamp).all()
+    
+    response_messages = [
+        StoredChatMessageResponse(
+            sender=msg.sender,
+            content=msg.content,
+            timestamp=msg.timestamp
+        ) for msg in messages_from_db
+    ]
+    return ChatHistoryResponse(messages=response_messages)
+
+@api_app.post("/chat", response_model=ChatResponse, summary="챗봇과 대화")
+async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
+    """
+    사용자의 메시지를 받아 LangGraph 에이전트를 실행하고 응답을 반환하며,
+    사용자 메시지와 에이전트 응답을 데이터베이스에 저장합니다.
     """
     # langchain_chat_history = []
     # request.chat_history는 Dict[str, str] 리스트로 들어옴
@@ -88,11 +124,42 @@ async def chat_with_agent(request: ChatRequest):
     #         langchain_chat_history.append(SystemMessage(content=msg_content)) # ✨ 실제 SystemMessage 객체로 변환
         # 다른 타입은 무시하거나 에러 처리
 
+    if request.user_id is None:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    
+    # 1. 사용자 메시지 데이터베이스에 저장
+    user_msg_db = ChatMessage(
+        user_id = request.user_id,
+        sender = 'user',
+        content = request.user_input,
+    )
+    db.add(user_msg_db)
+    db.commit()
+    db.refresh(user_msg_db)
+    
+    # 2. LangChain의 BaseMessage 객체로 chat_history 변환
+    langchain_chat_history = []
+    for msg_dict in request.chat_history:
+        msg_content = msg_dict.get("content", "")
+        msg_type = msg_dict.get("type", "")
+
+        if msg_type == "human":
+            langchain_chat_history.append(HumanMessage(content=msg_content))
+        elif msg_type == "ai":
+            langchain_chat_history.append(AIMessage(content=msg_content))
+        elif msg_type == "system":
+            langchain_chat_history.append(SystemMessage(content=msg_content))
+        else:
+            continue
+        
+    # 현재 사용자 메시지를 LangChain의 BaseMessage 객체로 변환하여 추가
+    langchain_chat_history.append(HumanMessage(content=request.user_input))
+    
     # LangGraph 앱의 초기 상태 구성
     # AgentState의 chat_history는 List[BaseMessage]를 기대하므로, 위에서 변환된 객체를 전달
     initial_state: AgentState = {
         "input": request.user_input,
-        "chat_history": request.chat_history, # List[Dict[str, str]]
+        "chat_history": langchain_chat_history, # List[BaseMessage]
         "tool_calls": [],
         "tool_output": [],
         "agent_response": "",
@@ -111,6 +178,16 @@ async def chat_with_agent(request: ChatRequest):
                 response_content = f"도구 실행 완료: {json.dumps(final_state['tool_output'], ensure_ascii=False, default=str)}"
             else:
                 response_content = "챗봇이 응답을 생성하지 못했습니다."
+        
+        # 4. 에이전트 응답 데이터베이스에 저장
+        agent_msg_db = ChatMessage(
+            user_id = request.user_id,
+            sender='bot',
+            content=response_content,
+        )
+        db.add(agent_msg_db)
+        db.commit()
+        db.refresh(agent_msg_db)
         
         return ChatResponse(response=response_content)
 

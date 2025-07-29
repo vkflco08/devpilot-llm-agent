@@ -1,24 +1,18 @@
-import os
-import json
 import httpx
 from dotenv import load_dotenv
-from typing import List, Dict, Any
 
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_openai import ChatOpenAI
 
 # LangChain and LangGraph imports
 from langchain_core.messages import (
-    BaseMessage,
     HumanMessage,
-    AIMessage,
     SystemMessage,
-    ToolCall, # 👈 Make sure this is imported
 )
 from langgraph.graph import StateGraph, END
 
 # Local application imports
-from devpilot_agent.state import AgentState, ToolCall as AgentToolCall # TypedDict for state
+from devpilot_agent.state import AgentState
 from devpilot_agent.project_tools import (
     create_project, get_all_projects_with_tasks, get_single_project_with_tasks,
     update_project, delete_project, get_dashboard_projects
@@ -57,41 +51,6 @@ SYSTEM_PROMPT = SystemMessage(content="""
 항상 한국어로 친절하게 응답해줘.
 """)
 
-# --- Helper Functions for Data Conversion ---
-
-def _convert_dict_to_langchain_message(msg_dict: Dict[str, Any]) -> BaseMessage:
-    """Converts a dictionary from chat_history back to a LangChain message object."""
-    msg_type = msg_dict.get("type")
-    content = msg_dict.get("content", "")
-
-    if msg_type == "human":
-        return HumanMessage(content=content)
-    elif msg_type == "ai":
-        tool_calls_dicts = msg_dict.get("tool_calls")
-        if tool_calls_dicts:
-            # ✨ THIS IS THE CRITICAL FIX ✨
-            # Convert dictionaries back to official ToolCall objects
-            # before creating the AIMessage.
-            parsed_tool_calls = [
-                ToolCall(name=tc["name"], args=tc["args"], id=tc.get("id"))
-                for tc in tool_calls_dicts
-            ]
-            return AIMessage(content=content, tool_calls=parsed_tool_calls)
-        return AIMessage(content=content)
-    # Return a default or handle other types if necessary
-    return HumanMessage(content=content)
-
-def _convert_aimessage_to_dict(message: AIMessage) -> Dict[str, Any]:
-    """Converts an AIMessage object into a serializable dictionary for chat_history."""
-    result = {"type": "ai", "content": message.content}
-    if message.tool_calls:
-        # Convert ToolCall objects into simple dictionaries
-        result["tool_calls"] = [
-            {"name": tc["name"], "args": tc["args"], "id": tc.get("id")}
-            for tc in message.tool_calls
-        ]
-    return result
-
 # 3. Graph Nodes
 
 def call_model(state: AgentState) -> dict:
@@ -99,8 +58,12 @@ def call_model(state: AgentState) -> dict:
     print("\n[call_model] --- Start ---")
     user_input = state["input"]
     
-    # Convert history of dicts to list of message objects for the LLM
-    langchain_chat_history = [_convert_dict_to_langchain_message(msg) for msg in state["chat_history"]]
+    # --- 여기서 수정합니다 ---
+    # state["chat_history"]는 이미 LangChain 메시지 객체 리스트입니다.
+    # 따라서 별도의 변환 없이 바로 사용합니다.
+    langchain_chat_history = state["chat_history"] 
+    # -----------------------
+
     current_conversation = [SYSTEM_PROMPT] + langchain_chat_history + [HumanMessage(content=user_input)]
     
     # LangChain tool 객체를 OpenAI API가 요구하는 딕셔너리 형태로 변환합니다.
@@ -111,11 +74,10 @@ def call_model(state: AgentState) -> dict:
     response = llm.invoke(current_conversation, tools=tools_as_dicts)
     
     print(f"[call_model] LLM raw response: {response}")
+    new_human_message = HumanMessage(content=user_input) 
+    new_ai_message = response
 
-    # Convert new messages to dicts before adding to state
-    human_msg_dict = {"type": "human", "content": user_input}
-    ai_msg_dict = _convert_aimessage_to_dict(response)
-    new_chat_history = state["chat_history"] + [human_msg_dict, ai_msg_dict]
+    new_chat_history = state["chat_history"] + [new_human_message, new_ai_message]
 
     if response.tool_calls:
         tool_calls = [AgentToolCall(name=tc['name'], args=tc['args']) for tc in response.tool_calls]
