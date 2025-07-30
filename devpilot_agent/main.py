@@ -96,12 +96,24 @@ def call_tool(state: AgentState) -> dict:
     print(f"\n[call_tool] --- Start ---")
     tool_outputs = []
     
+    user_id = state.get("user_id")
+    if user_id is None:
+        # user_id가 없으면 도구를 실행할 수 없으므로 오류 처리
+        # LangGraph 상태를 업데이트하여 오류 메시지를 전달
+        error_message = "Error: User ID is missing from agent state, cannot execute tools."
+        print(error_message)
+        return {
+            "agent_response": error_message,
+            "tool_output": [], # 도구 실행 결과는 없음
+            "chat_history": state["chat_history"] + [AIMessage(content=error_message)]
+        }
+    
     for tool_call in state["tool_calls"]:
         tool_name = tool_call['name']
         tool_args = tool_call['args']
         print(f"[call_tool] Executing tool: {tool_name} with args: {tool_args}")
         try:
-            output = tool_map[tool_name](**tool_args)
+            output = tool_map[tool_name](**tool_args, request_user_id=user_id)
             tool_outputs.append(output)
         except Exception as e:
             error_msg = f"Tool '{tool_name}' execution error: {e}"

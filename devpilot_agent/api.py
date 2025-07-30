@@ -164,7 +164,7 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
         "tool_output": [],
         "agent_response": "",
         "clarification_needed": False,
-        # "user_id": request.user_id # AgentState에 user_id 필드가 있다면 추가
+        "user_id": request.user_id
     }
 
     try:
