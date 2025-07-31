@@ -19,7 +19,7 @@ from devpilot_agent.project_tools import (
 )
 from devpilot_agent.task_tools import (
     create_task, get_all_tasks, get_single_task, update_task,
-    update_task_tags, update_task_time, update_task_status,
+    update_task_tags, update_task_status,
     update_task_schedule, remove_task_tags
 )
 
@@ -29,15 +29,14 @@ load_dotenv()
 llm = ChatOpenAI(
     model="gpt-4o", 
     temperature=0,
-    #
     http_client=httpx.Client(proxies=None)
-    )
+)
 
 tools = [
     create_project, get_all_projects_with_tasks, get_single_project_with_tasks,
     update_project, delete_project, get_dashboard_projects, create_task,
     get_all_tasks, get_single_task, update_task, update_task_tags,
-    update_task_time, update_task_status, update_task_schedule, remove_task_tags,
+    update_task_status, update_task_schedule, remove_task_tags,
 ]
 tool_map = {tool.name: tool for tool in tools}
 
@@ -52,25 +51,18 @@ SYSTEM_PROMPT = SystemMessage(content="""
 """)
 
 # 3. Graph Nodes
-
 def call_model(state: AgentState) -> dict:
     """Invokes the LLM and decides the next action."""
     print("\n[call_model] --- Start ---")
     user_input = state["input"]
     
-    # --- 여기서 수정합니다 ---
-    # state["chat_history"]는 이미 LangChain 메시지 객체 리스트입니다.
-    # 따라서 별도의 변환 없이 바로 사용합니다.
     langchain_chat_history = state["chat_history"] 
-    # -----------------------
 
     current_conversation = [SYSTEM_PROMPT] + langchain_chat_history + [HumanMessage(content=user_input)]
     
-    # LangChain tool 객체를 OpenAI API가 요구하는 딕셔너리 형태로 변환합니다.
     tools_as_dicts = [convert_to_openai_tool(t) for t in tools]
 
     print(f"[call_model] LLM input conversation: {current_conversation}")
-    # llm.invoke 호출 시 변환된 딕셔너리 리스트를 전달합니다.
     response = llm.invoke(current_conversation, tools=tools_as_dicts)
     
     print(f"[call_model] LLM raw response: {response}")

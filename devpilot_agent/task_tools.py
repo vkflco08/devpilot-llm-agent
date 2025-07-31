@@ -166,17 +166,12 @@ def update_task_tags(task_id: int, tags: Optional[List[str]], request_user_id: O
     """
     특정 태스크의 태그를 업데이트합니다. 기존 태그는 새로운 태그 목록으로 교체됩니다.
     이 도구는 '123번 태스크에 '긴급', '회의' 태그를 추가해줘'와 같은 요청에 사용됩니다.
-    태그를 완전히 제거하려면 'remove_task_tags' 도구를 사용해야 합니다.
+    태그를 완전히 제거하려면 빈 문자열을 입력하는 방식을 사용합니다.
 
     :param task_id: 태그를 변경할 태스크의 고유 ID (필수).
     :param tags: 태스크의 새로운 태그 목록 (List[str], 선택 사항. 빈 리스트를 넘기면 태그가 없는 상태가 됩니다. None은 허용되지 않습니다.).
     :return: 업데이트된 태스크의 정보 (dict) 또는 에러 메시지.
     """
-    # @field:NotEmpty 때문에 빈 리스트는 보낼 수 있지만 None은 보낼 수 없습니다.
-    # LLM이 None을 태그 삭제로 해석하지 않도록 docstring을 수정했습니다.
-    # 만약 태그를 완전히 지우고 싶다면, Spring에 별도의 DELETE API를 구현하는 것이 좋습니다.
-    if tags is None:
-        return {"error": "태그를 업데이트하려면 태그 목록을 제공해야 합니다. 태그를 제거하려면 remove_task_tags 도구를 사용하세요."}
 
     payload = {"tags": tags}
     return call_spring_api("PATCH", f"/tasks/{task_id}/tags", payload=payload, user_id_for_request=request_user_id)
@@ -221,31 +216,6 @@ def update_task_schedule(
         return {"error": "수정할 스케줄 정보가 제공되지 않았습니다. 최소 하나 이상의 필드를 입력해야 합니다."}
 
     return call_spring_api("PATCH", f"/tasks/{task_id}/schedule", payload=payload, user_id_for_request=request_user_id)
-
-
-@tool
-def update_task_time(
-    task_id: int,
-    estimated_time_hours: Optional[float] = None,
-    request_user_id: Optional[int] = None,
-) -> Dict[str, Any]:
-    """
-    특정 태스크의 예상 소요 시간을 업데이트합니다.
-    이 도구는 '123번 태스크 예상 시간을 5시간으로 바꿔줘'와 같은 요청에 사용됩니다.
-
-    :param task_id: 예상 소요 시간을 변경할 태스크의 고유 ID (필수).
-    :param estimated_time_hours: 태스크의 새로운 예상 소요 시간 (시간 단위, 선택 사항).
-    :return: 업데이트된 태스크의 정보 (dict) 또는 에러 메시지.
-    """
-    payload = {}
-    if estimated_time_hours is not None:
-        payload["estimatedTimeHours"] = estimated_time_hours
-    
-    if not payload:
-        return {"error": "수정할 예상 소요 시간 정보가 제공되지 않았습니다."}
-
-    return call_spring_api("PATCH", f"/tasks/{task_id}/time", payload=payload, user_id_for_request=request_user_id)
-
 
 
 # --- 테스트 코드 (파일 하단에 추가) ---
