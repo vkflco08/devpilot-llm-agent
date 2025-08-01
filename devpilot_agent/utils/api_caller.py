@@ -18,7 +18,7 @@ def call_spring_api(
     if not SPRING_BACKEND_URL:
         return {"error": "SPRING_BACKEND_URL 환경 변수가 설정되지 않았습니다."}
 
-    url = f"{SPRING_BACKEND_URL}/api/mcp{path}"
+    url = f"{SPRING_BACKEND_URL}/api/agent{path}"
 
     headers = {}
     headers["Content-Type"] = "application/json"
