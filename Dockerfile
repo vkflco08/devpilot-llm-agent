@@ -20,6 +20,7 @@ COPY devpilot_agent/ devpilot_agent/
 
 # ✨ CMD 명령어를 Uvicorn을 사용하여 FastAPI 앱을 실행하도록 변경
 # devpilot_agent.api:api_app 은 devpilot_agent 폴더의 api.py 파일에서 api_app 객체를 실행하라는 의미
+# uvicorn devpilot_agent.api:api_app --reload --host 0.0.0.0 --port 8000
 CMD ["uvicorn", "devpilot_agent.api:api_app", "--host", "0.0.0.0", "--port", "8000"]
 
 # FastAPI 앱이 8000번 포트에서 실행될 것임을 노출

@@ -3,57 +3,14 @@ import os
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 from typing import Optional, Literal, List, Dict, Any
+from devpilot_agent.utils.api_caller import call_spring_api
 
 # 환경 변수 로드 (이 파일이 단독으로 실행될 때를 위함)
 load_dotenv()
 
-SPRING_BACKEND_URL = os.getenv("SPRING_BACKEND_URL")
-
 # TaskStatus 열거형을 Python에서 사용할 수 있도록 정의
 # 실제 Spring의 TaskStatus와 정확히 일치해야 합니다.
 TaskStatus = Literal["TODO", "IN_PROGRESS", "DONE", "BLOCKED"]
-
-# 공통 API 호출 로직: 중복 코드를 줄이고 에러 처리를 중앙화합니다.
-def _call_spring_api(
-    method: str,
-    path: str,
-    payload: Optional[Dict[str, Any]] = None,
-    params: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """
-    Spring 백엔드의 MCP API를 호출하는 내부 헬퍼 함수입니다.
-    """
-    if not SPRING_BACKEND_URL:
-        return {"error": "SPRING_BACKEND_URL 환경 변수가 설정되지 않았습니다."}
-
-    # LLM용 MCP 엔드포인트는 /api/mcp/{도메인}/{액션} 형태로 가정
-    url = f"{SPRING_BACKEND_URL}/api/mcp{path}"
-
-    try:
-        if method.upper() == "POST":
-            response = requests.post(url, json=payload)
-        elif method.upper() == "GET":
-            response = requests.get(url, params=params)
-        elif method.upper() == "PUT":
-            response = requests.put(url, json=payload)
-        elif method.upper() == "DELETE":
-            response = requests.delete(url)
-        else:
-            return {"error": f"지원하지 않는 HTTP 메소드: {method}"}
-
-        response.raise_for_status() # HTTP 4xx/5xx 에러 발생 시 예외 처리
-
-        # DELETE 요청 등 응답 바디가 없을 수 있으므로 content가 있는지 확인
-        return response.json() if response.content else {"message": "Success", "status_code": response.status_code}
-
-    except requests.exceptions.ConnectionError:
-        return {"error": f"Spring 백엔드에 연결할 수 없습니다. URL: {SPRING_BACKEND_URL}"}
-    except requests.exceptions.Timeout:
-        return {"error": "Spring 백엔드 응답 시간 초과."}
-    except requests.exceptions.RequestException as e:
-        # 더 자세한 에러 메시지를 포함하여 디버깅에 도움
-        return {"error": f"API 호출 실패: {e}. 응답 내용: {response.text if response else '없음'}"}
-
 
 # --- 태스크 CRUD Tools ---
 
@@ -68,6 +25,7 @@ def create_task(
     status: TaskStatus = "TODO", # Spring에서 default TODO이므로 기본값 설정
     # parent_id: Optional[int] = None, # 현재 TaskCreateRequest에 parentId가 주석 처리되어 있어 제외
     project_id: Optional[int] = None,
+    request_user_id: Optional[int] = None,
 ) -> dict:
     """
     새로운 태스크를 생성합니다. 태스크의 제목, 설명, 태그, 우선순위, 마감일, 예상 소요 시간, 상태, 관련 프로젝트 ID를 입력받습니다.
@@ -96,22 +54,22 @@ def create_task(
     # payload에서 None인 값들을 제거하여 Spring의 Optional<Type> 매핑을 돕습니다.
     payload = {k: v for k, v in payload.items() if v is not None}
 
-    return _call_spring_api("POST", "/tasks/new", payload=payload)
+    return call_spring_api("POST", "/tasks/new", payload=payload, user_id_for_request=request_user_id)
 
 
 @tool
-def get_all_tasks() -> List[Dict[str, Any]]:
+def get_all_tasks(request_user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """
     현재 사용자의 모든 태스크를 조회합니다.
     이 도구는 '내 모든 태스크를 보여줘'와 같은 요청에 사용됩니다.
 
     :return: 모든 태스크 목록 (List[dict]) 또는 에러 메시지.
     """
-    return _call_spring_api("GET", "/tasks/all")
+    return call_spring_api("GET", "/tasks/all", user_id_for_request=request_user_id)
 
 
 @tool
-def get_single_task(task_id: int) -> Dict[str, Any]:
+def get_single_task(task_id: int, request_user_id: Optional[int] = None) -> Dict[str, Any]:
     """
     특정 ID의 단일 태스크를 조회합니다.
     이 도구는 '123번 태스크는 뭐야?'와 같은 요청에 사용됩니다.
@@ -119,7 +77,7 @@ def get_single_task(task_id: int) -> Dict[str, Any]:
     :param task_id: 조회할 태스크의 고유 ID (필수).
     :return: 단일 태스크 정보 (dict) 또는 에러 메시지.
     """
-    return _call_spring_api("GET", f"/tasks/{task_id}")
+    return call_spring_api("GET", f"/tasks/{task_id}", user_id_for_request=request_user_id)
 
 
 @tool
@@ -134,6 +92,7 @@ def update_task(
     status: Optional[TaskStatus] = None,
     # parent_id: Optional[int] = None,
     project_id: Optional[int] = None,
+    request_user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     기존 태스크의 정보를 수정합니다. 수정할 필드만 입력하면 됩니다.
@@ -173,11 +132,11 @@ def update_task(
     if not payload:
         return {"error": "수정할 태스크 정보가 제공되지 않았습니다. 최소 하나 이상의 필드를 입력해야 합니다."}
 
-    return _call_spring_api("PUT", f"/tasks/{task_id}", payload=payload)
+    return call_spring_api("PUT", f"/tasks/{task_id}", payload=payload, user_id_for_request=request_user_id)
 
 
 @tool
-def delete_task(task_id: int) -> Dict[str, Any]:
+def delete_task(task_id: int, request_user_id: Optional[int] = None) -> Dict[str, Any]:
     """
     특정 태스크를 삭제합니다.
     이 도구는 '123번 태스크를 삭제해줘'와 같은 요청에 사용됩니다.
@@ -185,11 +144,11 @@ def delete_task(task_id: int) -> Dict[str, Any]:
     :param task_id: 삭제할 태스크의 고유 ID (필수).
     :return: 성공 메시지 또는 에러 메시지.
     """
-    return _call_spring_api("DELETE", f"/tasks/{task_id}")
+    return call_spring_api("DELETE", f"/tasks/{task_id}", user_id_for_request=request_user_id)
 
 
 @tool
-def update_task_status(task_id: int, status: TaskStatus) -> Dict[str, Any]:
+def update_task_status(task_id: int, status: TaskStatus, request_user_id: Optional[int] = None) -> Dict[str, Any]:
     """
     특정 태스크의 상태를 업데이트합니다.
     이 도구는 '123번 태스크를 완료 상태로 바꿔줘'와 같은 요청에 사용됩니다.
@@ -199,32 +158,27 @@ def update_task_status(task_id: int, status: TaskStatus) -> Dict[str, Any]:
     :return: 업데이트된 태스크의 정보 (dict) 또는 에러 메시지.
     """
     payload = {"status": status}
-    return _call_spring_api("PATCH", f"/tasks/{task_id}/status", payload=payload)
+    return call_spring_api("PATCH", f"/tasks/{task_id}/status", payload=payload, user_id_for_request=request_user_id)
 
 
 @tool
-def update_task_tags(task_id: int, tags: Optional[List[str]]) -> Dict[str, Any]:
+def update_task_tags(task_id: int, tags: Optional[List[str]], request_user_id: Optional[int] = None) -> Dict[str, Any]:
     """
     특정 태스크의 태그를 업데이트합니다. 기존 태그는 새로운 태그 목록으로 교체됩니다.
     이 도구는 '123번 태스크에 '긴급', '회의' 태그를 추가해줘'와 같은 요청에 사용됩니다.
-    태그를 완전히 제거하려면 'remove_task_tags' 도구를 사용해야 합니다.
+    태그를 완전히 제거하려면 빈 문자열을 입력하는 방식을 사용합니다.
 
     :param task_id: 태그를 변경할 태스크의 고유 ID (필수).
     :param tags: 태스크의 새로운 태그 목록 (List[str], 선택 사항. 빈 리스트를 넘기면 태그가 없는 상태가 됩니다. None은 허용되지 않습니다.).
     :return: 업데이트된 태스크의 정보 (dict) 또는 에러 메시지.
     """
-    # @field:NotEmpty 때문에 빈 리스트는 보낼 수 있지만 None은 보낼 수 없습니다.
-    # LLM이 None을 태그 삭제로 해석하지 않도록 docstring을 수정했습니다.
-    # 만약 태그를 완전히 지우고 싶다면, Spring에 별도의 DELETE API를 구현하는 것이 좋습니다.
-    if tags is None:
-        return {"error": "태그를 업데이트하려면 태그 목록을 제공해야 합니다. 태그를 제거하려면 remove_task_tags 도구를 사용하세요."}
 
     payload = {"tags": tags}
-    return _call_spring_api("PATCH", f"/tasks/{task_id}/tags", payload=payload)
+    return call_spring_api("PATCH", f"/tasks/{task_id}/tags", payload=payload, user_id_for_request=request_user_id)
 
 
 @tool
-def remove_task_tags(task_id: int) -> Dict[str, Any]:
+def remove_task_tags(task_id: int, request_user_id: Optional[int] = None) -> Dict[str, Any]:
     """
     특정 태스크의 모든 태그를 제거합니다.
     이 도구는 '123번 태스크의 모든 태그를 삭제해줘'와 같은 요청에 사용됩니다.
@@ -233,14 +187,15 @@ def remove_task_tags(task_id: int) -> Dict[str, Any]:
     :return: 업데이트된 태스크의 정보 (dict) 또는 에러 메시지.
     """
     # Spring 백엔드에 DELETE /api/mcp/tasks/{id}/tags 엔드포인트가 필요합니다.
-    return _call_spring_api("DELETE", f"/tasks/{task_id}/tags")
+    return call_spring_api("DELETE", f"/tasks/{task_id}/tags", user_id_for_request=request_user_id)
 
 
 @tool
 def update_task_schedule(
     task_id: int,
     due_date: Optional[str] = None, # YYYY-MM-DD
-    priority: Optional[int] = None
+    priority: Optional[int] = None,
+    request_user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     특정 태스크의 마감일과 우선순위를 업데이트합니다.
@@ -260,31 +215,7 @@ def update_task_schedule(
     if not payload:
         return {"error": "수정할 스케줄 정보가 제공되지 않았습니다. 최소 하나 이상의 필드를 입력해야 합니다."}
 
-    return _call_spring_api("PATCH", f"/tasks/{task_id}/schedule", payload=payload)
-
-
-@tool
-def update_task_time(
-    task_id: int,
-    estimated_time_hours: Optional[float] = None
-) -> Dict[str, Any]:
-    """
-    특정 태스크의 예상 소요 시간을 업데이트합니다.
-    이 도구는 '123번 태스크 예상 시간을 5시간으로 바꿔줘'와 같은 요청에 사용됩니다.
-
-    :param task_id: 예상 소요 시간을 변경할 태스크의 고유 ID (필수).
-    :param estimated_time_hours: 태스크의 새로운 예상 소요 시간 (시간 단위, 선택 사항).
-    :return: 업데이트된 태스크의 정보 (dict) 또는 에러 메시지.
-    """
-    payload = {}
-    if estimated_time_hours is not None:
-        payload["estimatedTimeHours"] = estimated_time_hours
-    
-    if not payload:
-        return {"error": "수정할 예상 소요 시간 정보가 제공되지 않았습니다."}
-
-    return _call_spring_api("PATCH", f"/tasks/{task_id}/time", payload=payload)
-
+    return call_spring_api("PATCH", f"/tasks/{task_id}/schedule", payload=payload, user_id_for_request=request_user_id)
 
 
 # --- 테스트 코드 (파일 하단에 추가) ---

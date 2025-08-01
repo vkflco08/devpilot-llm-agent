@@ -3,46 +3,19 @@ import os
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 from typing import Optional, Literal, List, Dict, Any
+from devpilot_agent.utils.api_caller import call_spring_api
 
 load_dotenv()
 SPRING_BACKEND_URL = os.getenv("SPRING_BACKEND_URL")
 
 ProjectStatus = Literal["ACTIVE", "ARCHIVED", "COMPLETED"] # Spring과 동일하게 정의
 
-# 공통 API 호출 로직 (중복 제거)
-def _call_spring_api(method: str, path: str, payload: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    if not SPRING_BACKEND_URL:
-        return {"error": "SPRING_BACKEND_URL 환경 변수가 설정되지 않았습니다."}
-    
-    url = f"{SPRING_BACKEND_URL}/api/mcp{path}" # /api/mcp 접두사는 고정
-    
-    try:
-        if method.upper() == "POST":
-            response = requests.post(url, json=payload)
-        elif method.upper() == "GET":
-            response = requests.get(url, params=params)
-        elif method.upper() == "PUT":
-            response = requests.put(url, json=payload)
-        elif method.upper() == "DELETE":
-            response = requests.delete(url)
-        else:
-            return {"error": f"지원하지 않는 HTTP 메소드: {method}"}
-            
-        response.raise_for_status() # HTTP 4xx/5xx 에러 발생 시 예외 처리
-        return response.json() if response.content else {"message": "Success"} # DELETE 요청 등 응답 바디 없을 수 있음
-    except requests.exceptions.ConnectionError:
-        return {"error": f"Spring 백엔드에 연결할 수 없습니다. URL: {SPRING_BACKEND_URL}"}
-    except requests.exceptions.Timeout:
-        return {"error": "Spring 백엔드 응답 시간 초과."}
-    except requests.exceptions.RequestException as e:
-        return {"error": f"API 호출 실패: {e}. 응답 내용: {response.text if response else '없음'}"}
-
-
 @tool
 def create_project(
     project_name: str,
     project_description: Optional[str] = None,
-    project_status: ProjectStatus = "ACTIVE"
+    project_status: ProjectStatus = "ACTIVE",
+    request_user_id: Optional[int] = None,
 ) -> dict:
     """
     새로운 프로젝트를 생성합니다. 프로젝트 이름, 설명, 상태를 입력받습니다.
@@ -56,35 +29,42 @@ def create_project(
         "projectDescription": project_description,
         "projectStatus": project_status
     }
-    return _call_spring_api("POST", "/projects/new", payload=payload)
+    return call_spring_api("POST", "/projects/new", payload=payload, user_id_for_request=request_user_id)
 
 
 @tool
-def get_all_projects_with_tasks() -> List[Dict[str, Any]]:
+def get_all_projects_with_tasks(
+    request_user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """
     현재 사용자의 모든 프로젝트와 그에 속한 태스크들을 조회합니다.
     :return: 프로젝트와 태스크 목록 (List[dict]) 또는 에러 메시지.
     """
-    return _call_spring_api("GET", "/projects/mypage")
+    return call_spring_api("GET", "/projects/mypage", user_id_for_request=request_user_id)
 
 
 @tool
-def get_dashboard_projects() -> List[Dict[str, Any]]:
+def get_dashboard_projects(
+    request_user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """
     현재 사용자의 진행 중인 프로젝트와 그에 속한 태스크들을 조회합니다.
     :return: 진행 중인 프로젝트 목록 (List[dict]) 또는 에러 메시지.
     """
-    return _call_spring_api("GET", "/projects/dashboard")
+    return call_spring_api("GET", "/projects/dashboard", user_id_for_request=request_user_id)
 
 
 @tool
-def get_single_project_with_tasks(project_id: int) -> Dict[str, Any]:
+def get_single_project_with_tasks(
+    project_id: int,
+    request_user_id: Optional[int] = None,
+) -> Dict[str, Any]:
     """
     특정 ID의 단일 프로젝트와 그에 속한 태스크들을 조회합니다.
     :param project_id: 조회할 프로젝트의 고유 ID (필수).
     :return: 단일 프로젝트 정보 (dict) 또는 에러 메시지.
     """
-    return _call_spring_api("GET", f"/projects/{project_id}")
+    return call_spring_api("GET", f"/projects/{project_id}", user_id_for_request=request_user_id)
 
 
 @tool
@@ -92,7 +72,8 @@ def update_project(
     project_id: int,
     project_name: Optional[str] = None,
     project_description: Optional[str] = None,
-    project_status: Optional[ProjectStatus] = None
+    project_status: Optional[ProjectStatus] = None,
+    request_user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     기존 프로젝트의 정보를 수정합니다. 수정할 필드만 입력하면 됩니다.
@@ -113,17 +94,20 @@ def update_project(
     if not payload:
         return {"error": "수정할 프로젝트 정보가 제공되지 않았습니다."}
 
-    return _call_spring_api("PUT", f"/projects/{project_id}", payload=payload)
+    return call_spring_api("PUT", f"/projects/{project_id}", payload=payload, user_id_for_request=request_user_id)
 
 
 @tool
-def delete_project(project_id: int) -> Dict[str, Any]:
+def delete_project(
+    project_id: int,
+    request_user_id: Optional[int] = None,
+) -> Dict[str, Any]:
     """
     특정 프로젝트를 삭제합니다. 프로젝트와 관련된 모든 태스크도 함께 삭제됩니다.
     :param project_id: 삭제할 프로젝트의 고유 ID (필수).
     :return: 성공 메시지 또는 에러 메시지.
     """
-    return _call_spring_api("DELETE", f"/projects/{project_id}")
+    return call_spring_api("DELETE", f"/projects/{project_id}", user_id_for_request=request_user_id)
 
 # --- Tool 테스트 코드 (tools.py 파일 하단에 추가) ---
 if __name__ == "__main__":

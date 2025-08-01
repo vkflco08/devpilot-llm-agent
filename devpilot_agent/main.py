@@ -1,31 +1,25 @@
-import os
-import json
 import httpx
 from dotenv import load_dotenv
-from typing import List, Dict, Any
 
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_openai import ChatOpenAI
 
 # LangChain and LangGraph imports
 from langchain_core.messages import (
-    BaseMessage,
     HumanMessage,
-    AIMessage,
     SystemMessage,
-    ToolCall, # 👈 Make sure this is imported
 )
 from langgraph.graph import StateGraph, END
 
 # Local application imports
-from devpilot_agent.state import AgentState, ToolCall as AgentToolCall # TypedDict for state
+from devpilot_agent.state import AgentState
 from devpilot_agent.project_tools import (
     create_project, get_all_projects_with_tasks, get_single_project_with_tasks,
     update_project, delete_project, get_dashboard_projects
 )
 from devpilot_agent.task_tools import (
     create_task, get_all_tasks, get_single_task, update_task,
-    update_task_tags, update_task_time, update_task_status,
+    update_task_tags, update_task_status,
     update_task_schedule, remove_task_tags
 )
 
@@ -35,15 +29,14 @@ load_dotenv()
 llm = ChatOpenAI(
     model="gpt-4o", 
     temperature=0,
-    #
     http_client=httpx.Client(proxies=None)
-    )
+)
 
 tools = [
     create_project, get_all_projects_with_tasks, get_single_project_with_tasks,
     update_project, delete_project, get_dashboard_projects, create_task,
     get_all_tasks, get_single_task, update_task, update_task_tags,
-    update_task_time, update_task_status, update_task_schedule, remove_task_tags,
+    update_task_status, update_task_schedule, remove_task_tags,
 ]
 tool_map = {tool.name: tool for tool in tools}
 
@@ -57,65 +50,26 @@ SYSTEM_PROMPT = SystemMessage(content="""
 항상 한국어로 친절하게 응답해줘.
 """)
 
-# --- Helper Functions for Data Conversion ---
-
-def _convert_dict_to_langchain_message(msg_dict: Dict[str, Any]) -> BaseMessage:
-    """Converts a dictionary from chat_history back to a LangChain message object."""
-    msg_type = msg_dict.get("type")
-    content = msg_dict.get("content", "")
-
-    if msg_type == "human":
-        return HumanMessage(content=content)
-    elif msg_type == "ai":
-        tool_calls_dicts = msg_dict.get("tool_calls")
-        if tool_calls_dicts:
-            # ✨ THIS IS THE CRITICAL FIX ✨
-            # Convert dictionaries back to official ToolCall objects
-            # before creating the AIMessage.
-            parsed_tool_calls = [
-                ToolCall(name=tc["name"], args=tc["args"], id=tc.get("id"))
-                for tc in tool_calls_dicts
-            ]
-            return AIMessage(content=content, tool_calls=parsed_tool_calls)
-        return AIMessage(content=content)
-    # Return a default or handle other types if necessary
-    return HumanMessage(content=content)
-
-def _convert_aimessage_to_dict(message: AIMessage) -> Dict[str, Any]:
-    """Converts an AIMessage object into a serializable dictionary for chat_history."""
-    result = {"type": "ai", "content": message.content}
-    if message.tool_calls:
-        # Convert ToolCall objects into simple dictionaries
-        result["tool_calls"] = [
-            {"name": tc["name"], "args": tc["args"], "id": tc.get("id")}
-            for tc in message.tool_calls
-        ]
-    return result
-
 # 3. Graph Nodes
-
 def call_model(state: AgentState) -> dict:
     """Invokes the LLM and decides the next action."""
     print("\n[call_model] --- Start ---")
     user_input = state["input"]
     
-    # Convert history of dicts to list of message objects for the LLM
-    langchain_chat_history = [_convert_dict_to_langchain_message(msg) for msg in state["chat_history"]]
+    langchain_chat_history = state["chat_history"] 
+
     current_conversation = [SYSTEM_PROMPT] + langchain_chat_history + [HumanMessage(content=user_input)]
     
-    # LangChain tool 객체를 OpenAI API가 요구하는 딕셔너리 형태로 변환합니다.
     tools_as_dicts = [convert_to_openai_tool(t) for t in tools]
 
     print(f"[call_model] LLM input conversation: {current_conversation}")
-    # llm.invoke 호출 시 변환된 딕셔너리 리스트를 전달합니다.
     response = llm.invoke(current_conversation, tools=tools_as_dicts)
     
     print(f"[call_model] LLM raw response: {response}")
+    new_human_message = HumanMessage(content=user_input) 
+    new_ai_message = response
 
-    # Convert new messages to dicts before adding to state
-    human_msg_dict = {"type": "human", "content": user_input}
-    ai_msg_dict = _convert_aimessage_to_dict(response)
-    new_chat_history = state["chat_history"] + [human_msg_dict, ai_msg_dict]
+    new_chat_history = state["chat_history"] + [new_human_message, new_ai_message]
 
     if response.tool_calls:
         tool_calls = [AgentToolCall(name=tc['name'], args=tc['args']) for tc in response.tool_calls]
@@ -134,12 +88,24 @@ def call_tool(state: AgentState) -> dict:
     print(f"\n[call_tool] --- Start ---")
     tool_outputs = []
     
+    user_id = state.get("user_id")
+    if user_id is None:
+        # user_id가 없으면 도구를 실행할 수 없으므로 오류 처리
+        # LangGraph 상태를 업데이트하여 오류 메시지를 전달
+        error_message = "Error: User ID is missing from agent state, cannot execute tools."
+        print(error_message)
+        return {
+            "agent_response": error_message,
+            "tool_output": [], # 도구 실행 결과는 없음
+            "chat_history": state["chat_history"] + [AIMessage(content=error_message)]
+        }
+    
     for tool_call in state["tool_calls"]:
         tool_name = tool_call['name']
         tool_args = tool_call['args']
         print(f"[call_tool] Executing tool: {tool_name} with args: {tool_args}")
         try:
-            output = tool_map[tool_name](**tool_args)
+            output = tool_map[tool_name](**tool_args, request_user_id=user_id)
             tool_outputs.append(output)
         except Exception as e:
             error_msg = f"Tool '{tool_name}' execution error: {e}"

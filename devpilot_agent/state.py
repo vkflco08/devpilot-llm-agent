@@ -1,7 +1,5 @@
 # devpilot_agent/state.py
-from typing import List, TypedDict, Any, Dict
-from langchain_core.messages import BaseMessage
-from langgraph.graph import StateGraph, END
+from typing import List, TypedDict, Any, Dict, Optional
 
 # 에이전트가 처리해야 할 Tool 호출을 나타내는 클래스
 class ToolCall(TypedDict):
@@ -22,3 +20,4 @@ class AgentState(TypedDict):
     agent_response: str
     # 추가 정보가 필요한 상태인지 여부 (T/F)
     clarification_needed: bool
+    user_id: Optional[int]
