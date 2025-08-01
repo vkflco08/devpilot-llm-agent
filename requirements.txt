@@ -18,3 +18,4 @@ openai==1.35.7
 # Database
 sqlalchemy==2.0.39
 mysqlclient==2.1.1
+pymysql==1.1.1
