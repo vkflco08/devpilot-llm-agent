@@ -2,6 +2,9 @@ import os
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
+
+load_dotenv() 
 
 # 환경 변수에서 데이터베이스 URL 가져오기
 DATABASE_URL = os.environ.get("DATABASE_URL")
