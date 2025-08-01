@@ -4,8 +4,9 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 # 환경 변수에서 데이터베이스 URL 가져오기
-# .env 파일에 DATABASE_URL="mysql+pymysql://user:password@host:3306/dbname" 형태로 설정
-DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:ss4015@localhost:3306/devpilot")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set")
 
 # SQLAlchemy 엔진 생성
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
