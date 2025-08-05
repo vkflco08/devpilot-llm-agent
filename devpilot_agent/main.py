@@ -1,4 +1,6 @@
 import httpx
+import json
+import dataclasses
 from dotenv import load_dotenv
 
 from langchain_core.utils.function_calling import convert_to_openai_tool
@@ -24,6 +26,12 @@ from devpilot_agent.task_tools import (
 )
 
 load_dotenv()
+
+# LLM 응답에서 추출된 도구 호출 정보를 저장
+@dataclasses.dataclass
+class AgentToolCall:
+    name: str
+    args: dict
 
 # 1. LLM and Tools Initialization
 llm = ChatOpenAI(
@@ -70,7 +78,7 @@ def call_model(state: AgentState) -> dict:
     new_ai_message = response
 
     new_chat_history = state["chat_history"] + [new_human_message, new_ai_message]
-
+    
     if response.tool_calls:
         tool_calls = [AgentToolCall(name=tc['name'], args=tc['args']) for tc in response.tool_calls]
         return {"tool_calls": tool_calls, "chat_history": new_chat_history}
