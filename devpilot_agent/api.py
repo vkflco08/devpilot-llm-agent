@@ -23,8 +23,12 @@ from fastapi.middleware.cors import CORSMiddleware
 # .env 파일 로드 (환경 변수 사용을 위함)
 load_dotenv()
 
-allowed_origins_str = os.getenv("DEVPILOT_FRONT_URL", "") # 기본값을 빈 문자열로 설정
-allowed_origins = [origin.strip() for origin in allowed_origins_str.split(',') if origin.strip()]
+allowed_origins = []
+allowed_origins_str = os.getenv("DEVPILOT_FRONT_URL", "")
+allowed_origins.extend([origin.strip() for origin in allowed_origins_str.split(',') if origin.strip()])
+
+allowed_origins_2_str = os.getenv("SPRING_BACKEND_URL", "")
+allowed_origins.extend([origin.strip() for origin in allowed_origins_2_str.split(',') if origin.strip()])
 
 # 만약 허용할 Origin이 없다면 (예: 환경 변수가 비어있는 경우)
 # 개발 중이거나 모든 Origin을 허용해야 하는 경우를 대비해 "[]" 또는 ["*"]와 같은 기본값을 설정할 수 있습니다.
