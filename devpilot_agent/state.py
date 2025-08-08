@@ -1,10 +1,10 @@
-# devpilot_agent/state.py
 from typing import List, TypedDict, Any, Dict, Optional
 
 # 에이전트가 처리해야 할 Tool 호출을 나타내는 클래스
 class ToolCall(TypedDict):
     name: str
     args: dict
+    id: int
 
 # 에이전트의 상태를 정의
 class AgentState(TypedDict):
@@ -21,3 +21,4 @@ class AgentState(TypedDict):
     # 추가 정보가 필요한 상태인지 여부 (T/F)
     clarification_needed: bool
     user_id: Optional[int]
+    jwt_token: Optional[str]

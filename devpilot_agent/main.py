@@ -1,6 +1,6 @@
+import dataclasses
 import httpx
 import json
-import dataclasses
 from dotenv import load_dotenv
 
 from langchain_core.utils.function_calling import convert_to_openai_tool
@@ -10,8 +10,11 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
+    AIMessage,
+    ToolMessage
 )
 from langgraph.graph import StateGraph, END
+from langchain_core.runnables import RunnableConfig
 
 # Local application imports
 from devpilot_agent.state import AgentState
@@ -27,9 +30,9 @@ from devpilot_agent.task_tools import (
 
 load_dotenv()
 
-# LLM 응답에서 추출된 도구 호출 정보를 저장
 @dataclasses.dataclass
 class AgentToolCall:
+    id: str
     name: str
     args: dict
 
@@ -52,9 +55,10 @@ tool_map = {tool.name: tool for tool in tools}
 SYSTEM_PROMPT = SystemMessage(content="""
 너는 프로젝트와 태스크를 관리해주는 친절한 챗봇 비서야.
 사용자의 요청을 명확히 이해하고, 적절한 도구를 사용하여 작업을 수행해야 해.
-만약 사용자의 요청이 모호하거나 필요한 정보가 부족하다면, **절대 도구를 호출하지 말고 사용자에게 필요한 정보를 구체적으로 질문해야 해.**
-예시: "새 프로젝트를 만들어줘" -> "새 프로젝트의 이름은 무엇인가요?"
-예시: "이 태스크 상태를 바꿔줘" -> "어떤 태스크의 상태를 무엇으로 변경할까요?"
+**사용자의 요청에 필요한 모든 정보(예: 프로젝트 이름, 설명, 상태 등)가 명확하게 주어졌다면, 주저하지 말고 주저하지 말고 즉시 해당 도구를 호출하여 작업을 수행해.**
+만약 필요한 정보가 부족하여 도구를 실행할 수 없다면, **도구를 호출하지 말고 사용자에게 어떤 정보가 더 필요한지 구체적으로 질문해야 해.**
+사용자가 "안녕하세요"와 같은 일반적인 인사말을 하더라도, 이전에 진행 중이던 대화나 맥락이 있다면 이를 고려하여 응답해야 해.
+만약 도구 실행에 실패했다면, 사용자에게 오류를 친절하게 알리고 다시 시도하도록 안내하거나 다른 도움을 제공해야 해.
 항상 한국어로 친절하게 응답해줘.
 """)
 
@@ -62,33 +66,42 @@ SYSTEM_PROMPT = SystemMessage(content="""
 def call_model(state: AgentState) -> dict:
     """Invokes the LLM and decides the next action."""
     print("\n[call_model] --- Start ---")
-    user_input = state["input"]
     
-    langchain_chat_history = state["chat_history"] 
-
-    current_conversation = [SYSTEM_PROMPT] + langchain_chat_history + [HumanMessage(content=user_input)]
+    messages_for_llm = state["chat_history"] + [HumanMessage(content=state["input"])]
+    
+    current_conversation_for_llm = [SYSTEM_PROMPT] + messages_for_llm
     
     tools_as_dicts = [convert_to_openai_tool(t) for t in tools]
 
-    print(f"[call_model] LLM input conversation: {current_conversation}")
-    response = llm.invoke(current_conversation, tools=tools_as_dicts)
+    print(f"[call_model] LLM input conversation: {current_conversation_for_llm}")
+    response = llm.invoke(current_conversation_for_llm, tools=tools_as_dicts)
     
     print(f"[call_model] LLM raw response: {response}")
-    new_human_message = HumanMessage(content=user_input) 
-    new_ai_message = response
 
-    new_chat_history = state["chat_history"] + [new_human_message, new_ai_message]
-    
+    new_chat_history = messages_for_llm + [response]
+
+    next_input = ""
+
     if response.tool_calls:
-        tool_calls = [AgentToolCall(name=tc['name'], args=tc['args']) for tc in response.tool_calls]
-        return {"tool_calls": tool_calls, "chat_history": new_chat_history}
+        tool_calls = []
+        for tc in response.tool_calls:
+            if hasattr(tc, 'id') and hasattr(tc, 'name') and hasattr(tc, 'args'):
+                tool_calls.append(AgentToolCall(id=tc.id, name=tc.name, args=tc.args))
+            elif isinstance(tc, dict):
+                tool_calls.append(AgentToolCall(id=tc.get('id'), name=tc.get('name'), args=tc.get('args', {})))
+            else:
+                print(f"WARNING: Unknown tool call format: {type(tc)}")
+                
+        return {"tool_calls": tool_calls, "chat_history": new_chat_history, "input": next_input}
     else:
         agent_response_content = response.content
-        is_clarification = "?" in agent_response_content or any(kw in agent_response_content for kw in ["무엇인가요", "어떤", "언제", "담당자", "이름은"])
+        is_clarification = "?" in agent_response_content or any(kw in agent_response_content for kw in ["무엇인가요", "어떤", "언제", "담당자", "이름은", "정보가"])
+        
         return {
             "agent_response": agent_response_content,
             "clarification_needed": is_clarification,
-            "chat_history": new_chat_history
+            "chat_history": new_chat_history,
+            "input": next_input
         }
 
 def call_tool(state: AgentState) -> dict:
@@ -97,46 +110,86 @@ def call_tool(state: AgentState) -> dict:
     tool_outputs = []
     
     user_id = state.get("user_id")
+    jwt_token = state.get("jwt_token")
+
     if user_id is None:
-        # user_id가 없으면 도구를 실행할 수 없으므로 오류 처리
-        # LangGraph 상태를 업데이트하여 오류 메시지를 전달
         error_message = "Error: User ID is missing from agent state, cannot execute tools."
         print(error_message)
         return {
             "agent_response": error_message,
-            "tool_output": [], # 도구 실행 결과는 없음
+            "tool_output": [],
             "chat_history": state["chat_history"] + [AIMessage(content=error_message)]
         }
     
-    for tool_call in state["tool_calls"]:
-        tool_name = tool_call['name']
-        tool_args = tool_call['args']
+    current_tool_calls = state["tool_calls"]
+    next_tool_calls = []
+
+    for i, tool_call in enumerate(current_tool_calls):
+        tool_name = tool_call.name
+        tool_args = tool_call.args
+        tool_id = tool_call.id
+
         print(f"[call_tool] Executing tool: {tool_name} with args: {tool_args}")
         try:
-            output = tool_map[tool_name](**tool_args, request_user_id=user_id)
-            tool_outputs.append(output)
+            combined_args = {**tool_args, "jwt_token": jwt_token} 
+            
+            output = tool_map[tool_name].invoke(combined_args)
+            
+            tool_outputs.append({
+                "original_tool_call_id": tool_id,
+                "tool_name": tool_name,
+                "result": output
+            })
         except Exception as e:
-            error_msg = f"Tool '{tool_name}' execution error: {e}"
-            print(error_msg)
-            tool_outputs.append({"error": error_msg})
+            error_msg = f"프로젝트 생성 중 오류 발생: API 호출 실패: {e}. 응답 내용: 없음"
+            print(f"Tool '{tool_name}' execution error: {e}")
+            tool_outputs.append({
+                "original_tool_call_id": tool_id,
+                "tool_name": tool_name,
+                "error": error_msg
+            })
 
-    # Add tool results to chat history as simple dictionaries
     tool_results_for_history = []
-    for output in tool_outputs:
-        content_str = json.dumps(output, ensure_ascii=False, default=str)
-        tool_results_for_history.append({
-            "type": "tool",
-            "content": f"Tool execution result: {content_str}",
-        })
+    for output_item in tool_outputs:
+        tool_id_for_message = output_item.get("original_tool_call_id")
+        tool_result_content = output_item.get("result") or output_item.get("error")
+        tool_name_for_message = output_item.get("tool_name")
+        
+        content_str = json.dumps(tool_result_content, ensure_ascii=False, default=str)
+        
+        tool_results_for_history.append(
+            ToolMessage(
+                content=content_str,
+                tool_call_id=tool_id_for_message,
+                name=tool_name_for_message
+            )
+        )
     
     new_chat_history = state["chat_history"] + tool_results_for_history
-    return {"tool_output": tool_outputs, "chat_history": new_chat_history}
+    
+    if any("error" in res for res in tool_outputs):
+        error_response_content = "프로젝트 생성 중 오류가 발생했습니다. API 호출에 문제가 있는 것 같습니다. 잠시 후 다시 시도해 주시거나, 다른 요청이 있으시면 말씀해 주세요. 불편을 드려 죄송합니다."
+        return {
+            "tool_output": tool_outputs, 
+            "chat_history": new_chat_history, 
+            "tool_calls": next_tool_calls, # tool_calls는 비워져야 함
+            "agent_response": error_response_content,
+            "clarification_needed": False # 명확화가 필요한 상황이 아님
+        }
+    else:
+        # 성공적으로 도구를 실행했으면, 추가적인 응답을 위해 다시 call_model로 가거나, 상황에 따라 바로 종료
+        return {
+            "tool_output": tool_outputs, 
+            "chat_history": new_chat_history, 
+            "tool_calls": next_tool_calls,
+            "agent_response": "도구 실행 성공.",
+            "clarification_needed": False
+        }
+
 
 def ask_for_clarification(state: AgentState) -> dict:
-    """Prepares the state for asking the user a clarifying question."""
     return {"agent_response": state["agent_response"], "clarification_needed": True}
 
-# 4. Graph Definition
 workflow = StateGraph(AgentState)
 
 workflow.add_node("call_model", call_model)
@@ -157,7 +210,7 @@ workflow.add_conditional_edges(
 )
 
 workflow.add_edge("call_tool", "call_model")
-workflow.add_edge("ask_for_clarification", END) # End after asking a question to wait for user input
+workflow.add_edge("ask_for_clarification", END)
 
 # 5. Compile Graph
 app = workflow.compile()
