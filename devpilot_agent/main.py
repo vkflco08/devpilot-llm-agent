@@ -206,6 +206,7 @@ workflow.add_conditional_edges(
     {
         "tool_call": "call_tool",
         "clarification": "ask_for_clarification",
+        END: END
     }
 )
 
